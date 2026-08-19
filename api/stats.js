@@ -5,8 +5,8 @@ const githubHeaders = {
   "X-GitHub-Api-Version": "2026-03-10",
 };
 
-if (process.env.GITHUB_TOKEN) {
-  githubHeaders.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+if (process.env.GH_TOKEN) {
+  githubHeaders.Authorization = `Bearer ${process.env.GH_TOKEN}`;
 }
 
 async function githubRequest(path) {
