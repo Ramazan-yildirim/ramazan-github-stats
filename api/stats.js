@@ -2,7 +2,7 @@ const USERNAME = 'Ramazan-yildirim';
 const GITHUB_GRAPHQL_URL = 'https://api.github.com/graphql';
 const SUCCESS_CACHE_SECONDS = 600;
 const ERROR_CACHE_SECONDS = 60;
-const FIRST_COMMIT_YEAR = 2023;
+const FIRST_CONTRIBUTION_YEAR = 2023;
 
 function buildOverviewQuery(years) {
   const commitVariables = years
@@ -15,8 +15,8 @@ function buildOverviewQuery(years) {
     .map(
       (year) =>
         `commits${year}: contributionsCollection(from: $commits${year}From, to: $commits${year}To) {
-          totalCommitContributions
           contributionCalendar { totalContributions }
+          restrictedContributionsCount
         }`
     )
     .join('\n');
@@ -102,8 +102,8 @@ async function githubGraphql(query, variables) {
 function getDateRange(now = new Date()) {
   const year = now.getUTCFullYear();
   const years = Array.from(
-    { length: year - FIRST_COMMIT_YEAR + 1 },
-    (_, index) => FIRST_COMMIT_YEAR + index
+    { length: year - FIRST_CONTRIBUTION_YEAR + 1 },
+    (_, index) => FIRST_CONTRIBUTION_YEAR + index
   );
   const streakStart = new Date(now);
 
@@ -185,12 +185,13 @@ async function getOverview() {
     sumRepositoryMetrics(repositories.nodes, totals);
   }
 
-  const commitsByYear = dateRange.years.map(
-    (year) => data.user[`commits${year}`]?.totalCommitContributions || 0
-  );
-  const currentYearContributions =
-    data.user[`commits${dateRange.year}`]?.contributionCalendar
-      ?.totalContributions || 0;
+  const contributionsByYear = dateRange.years.map((year) => {
+    const collection = data.user[`commits${year}`];
+    return (
+      (collection?.contributionCalendar?.totalContributions || 0) +
+      (collection?.restrictedContributionsCount || 0)
+    );
+  });
 
   return {
     name: data.user.name || USERNAME,
@@ -198,8 +199,11 @@ async function getOverview() {
     stars: totals.stars,
     followers: data.user.followers.totalCount,
     forks: totals.forks,
-    contributions: currentYearContributions,
-    totalCommits: commitsByYear.reduce((total, count) => total + count, 0),
+    contributions: contributionsByYear.at(-1) || 0,
+    totalContributions: contributionsByYear.reduce(
+      (total, count) => total + count,
+      0
+    ),
     year: dateRange.year,
     streak: calculateCurrentStreak(
       data.user.streakWindow.contributionCalendar.weeks
@@ -221,81 +225,87 @@ const ICONS = {
   stars: `<path d='m12 2.8 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.4l6.2-.9L12 2.8Z'/>`,
   followers: `<circle cx='9' cy='8' r='4'/><path d='M2 21a7 7 0 0 1 14 0M16 4.5a4 4 0 0 1 0 7.5M17.5 15a6 6 0 0 1 4.5 5.8'/>`,
   forks: `<circle cx='6' cy='5' r='2'/><circle cx='18' cy='5' r='2'/><circle cx='12' cy='19' r='2'/><path d='M6 7v3a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3V7M12 13v4'/>`,
-  commits: `<path d='M2 12h6M16 12h6'/><circle cx='12' cy='12' r='4'/>`,
+  activity: `<path d='M3 12h4l2.2-5 4.1 10 2.4-5H21'/>`,
   streak: `<rect x='3' y='5' width='18' height='16' rx='2'/><path d='M16 3v4M8 3v4M3 10h18M8 15l2 2 5-5'/>`,
 };
 
 function compactMetric(value, label, x, icon, accent) {
-  return `<g transform='translate(${x} 275)'>
-    <rect width='30' height='30' y='3' rx='7' fill='${accent}' opacity='.13'/>
-    <g class='icon' stroke='${accent}' transform='translate(6 9) scale(.72)'>${icon}</g>
-    <text class='mini-label' x='40' y='13'>${escapeXml(label)}</text>
-    <text class='mini-value' x='40' y='38'>${escapeXml(value)}</text>
+  return `<g transform='translate(${x} 278)'>
+    <rect width='158' height='56' rx='11' fill='#11171d' stroke='#303943'/>
+    <rect width='3' height='28' y='14' rx='1.5' fill='${accent}' opacity='.8'/>
+    <rect x='13' y='13' width='30' height='30' rx='8' fill='${accent}' opacity='.13'/>
+    <g class='icon' stroke='${accent}' transform='translate(19 19) scale(.72)'>${icon}</g>
+    <text class='mini-label' x='53' y='21'>${escapeXml(label)}</text>
+    <text class='mini-value' x='53' y='45'>${escapeXml(value)}</text>
   </g>`;
 }
 
 function createStatsSvg(stats) {
   const streakUnit = stats.streak === 1 ? 'CONSECUTIVE DAY' : 'CONSECUTIVE DAYS';
 
-  return `<svg width='720' height='344' viewBox='0 0 720 344' fill='none' xmlns='http://www.w3.org/2000/svg' role='img' aria-labelledby='title description'>
+  return `<svg width='720' height='352' viewBox='0 0 720 352' fill='none' xmlns='http://www.w3.org/2000/svg' role='img' aria-labelledby='title description'>
   <title id='title'>GitHub Overview for ${escapeXml(USERNAME)}</title>
-  <desc id='description'>Repositories, stars, followers, forks, yearly contributions, total commits, and current contribution streak.</desc>
+  <desc id='description'>Public and private contribution totals, current contribution streak, repositories, stars, followers, and forks.</desc>
   <style>
-    .name{font:650 18px 'Segoe UI',Arial,sans-serif;fill:#e6edf3}
-    .handle{font:11px 'Segoe UI',Arial,sans-serif;fill:#7f8994}
-    .eyebrow{font:650 9px 'Segoe UI',Arial,sans-serif;letter-spacing:1.65px;fill:#8298aa}
-    .monogram{font:700 15px 'Segoe UI',Arial,sans-serif;letter-spacing:.8px;fill:#d6dee5}
-    .section-label{font:650 10px 'Segoe UI',Arial,sans-serif;letter-spacing:1.35px;fill:#8c97a2}
-    .side-value{font:700 34px 'Segoe UI',Arial,sans-serif;fill:#e7edf2}
-    .side-meta{font:10px 'Segoe UI',Arial,sans-serif;fill:#6f7a85}
-    .focus-value{font:720 31px 'Segoe UI',Arial,sans-serif;fill:#f0f3f5}
-    .focus-label{font:650 9px 'Segoe UI',Arial,sans-serif;letter-spacing:1.2px;fill:#c99663}
-    .focus-year{font:11px 'Segoe UI',Arial,sans-serif;fill:#7f8993}
-    .mini-label{font:650 8px 'Segoe UI',Arial,sans-serif;letter-spacing:1px;fill:#77828d}
-    .mini-value{font:680 19px 'Segoe UI',Arial,sans-serif;fill:#dce3e8}
+    .name{font:650 18px 'Segoe UI',Arial,sans-serif;fill:#e7edf2}
+    .handle{font:11px 'Segoe UI',Arial,sans-serif;fill:#7e8994}
+    .eyebrow{font:650 9px 'Segoe UI',Arial,sans-serif;letter-spacing:1.7px;fill:#8299ad}
+    .monogram{font:700 15px 'Segoe UI',Arial,sans-serif;letter-spacing:.8px;fill:#dbe3e9}
+    .section-label{font:650 9.5px 'Segoe UI',Arial,sans-serif;letter-spacing:1.3px;fill:#8795a2}
+    .side-value{font:720 32px 'Segoe UI',Arial,sans-serif;fill:#e9eef2}
+    .side-meta{font:9px 'Segoe UI',Arial,sans-serif;letter-spacing:.35px;fill:#70808e}
+    .focus-value{font:740 36px 'Segoe UI',Arial,sans-serif;fill:#f1f4f6}
+    .focus-label{font:700 9px 'Segoe UI',Arial,sans-serif;letter-spacing:1.35px;fill:#d09a65}
+    .focus-meta{font:650 8.5px 'Segoe UI',Arial,sans-serif;letter-spacing:1px;fill:#82909c}
+    .mini-label{font:650 8px 'Segoe UI',Arial,sans-serif;letter-spacing:1.05px;fill:#7d8995}
+    .mini-value{font:700 19px 'Segoe UI',Arial,sans-serif;fill:#e0e7ec}
     .icon{fill:none;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round}
-    .status{font:650 8px 'Segoe UI',Arial,sans-serif;letter-spacing:1.15px;fill:#84909b}
+    .status{font:650 8px 'Segoe UI',Arial,sans-serif;letter-spacing:1.15px;fill:#87929c}
   </style>
-  <rect x='.5' y='.5' width='719' height='343' rx='15' fill='#0d1117' stroke='#303842'/>
 
-  <rect x='24' y='18' width='44' height='44' rx='11' fill='#18212a' stroke='#3a4651'/>
-  <path d='M24 50 56 18h12v12L36 62H24Z' fill='#7892a8' opacity='.12'/>
-  <text class='monogram' x='46' y='46' text-anchor='middle'>RY</text>
-  <text class='eyebrow' x='82' y='28'>GITHUB ACTIVITY</text>
-  <text class='name' x='82' y='49'>${escapeXml(stats.name)}</text>
-  <text class='handle' x='696' y='35' text-anchor='end'>@${escapeXml(USERNAME)}</text>
-  <circle cx='612' cy='53' r='3' fill='#789486'/>
-  <text class='status' x='621' y='56'>GITHUB DATA</text>
+  <rect x='.5' y='.5' width='719' height='351' rx='16' fill='#0d1218' stroke='#303a44'/>
+  <path d='M16 1h184' stroke='#7892a8' opacity='.36'/>
 
-  <rect x='24' y='78' width='672' height='174' rx='14' fill='#13181e' stroke='#333b44'/>
-  <rect x='318' y='78' width='84' height='3' rx='1.5' fill='#b98050'/>
-  <path d='M214 98v134M506 98v134' stroke='#353d45'/>
+  <rect x='24' y='17' width='46' height='46' rx='12' fill='#18232d' stroke='#3a4854'/>
+  <path d='M24 51 58 17h12v12L36 63H24Z' fill='#7892a8' opacity='.13'/>
+  <text class='monogram' x='47' y='46' text-anchor='middle'>RY</text>
+  <text class='eyebrow' x='84' y='28'>GITHUB OVERVIEW</text>
+  <text class='name' x='84' y='50'>${escapeXml(stats.name)}</text>
+  <text class='handle' x='696' y='31' text-anchor='end'>@${escapeXml(USERNAME)}</text>
+  <circle cx='602' cy='51' r='3' fill='#789486'/>
+  <text class='status' x='611' y='54'>PUBLIC + PRIVATE</text>
+
+  <rect x='24' y='77' width='672' height='185' rx='15' fill='#13191f' stroke='#343e47'/>
+  <path d='M226 98v142M494 98v142' stroke='#333c45'/>
+  <rect x='326' y='77' width='68' height='3' rx='1.5' fill='#bf8653'/>
 
   <g text-anchor='middle'>
-    <g class='icon' stroke='#7892a8' transform='translate(107 104) scale(.72)'>${ICONS.commits}</g>
-    <text class='section-label' x='119' y='135'>TOTAL COMMITS</text>
-    <text class='side-value' x='119' y='176'>${escapeXml(stats.totalCommits)}</text>
-    <text class='side-meta' x='119' y='205'>COUNTED SINCE ${FIRST_COMMIT_YEAR}</text>
+    <rect x='111' y='101' width='28' height='28' rx='8' fill='#7892a8' opacity='.13'/>
+    <g class='icon' stroke='#7892a8' transform='translate(116 106) scale(.75)'>${ICONS.activity}</g>
+    <text class='section-label' x='125' y='148'>TOTAL CONTRIBUTIONS</text>
+    <text class='side-value' x='125' y='184'>${escapeXml(stats.totalContributions)}</text>
+    <text class='side-meta' x='125' y='211'>SINCE ${FIRST_CONTRIBUTION_YEAR}</text>
+    <text class='side-meta' x='125' y='228'>PUBLIC + PRIVATE ACTIVITY</text>
 
-    <circle cx='360' cy='151' r='54' stroke='#303840' stroke-width='7'/>
-    <circle cx='360' cy='151' r='54' stroke='#b98050' stroke-width='3'/>
-    <circle cx='360' cy='97' r='5' fill='#13181e' stroke='#c48a55' stroke-width='3'/>
-    <text class='focus-value' x='360' y='153'>${escapeXml(stats.contributions)}</text>
-    <text class='focus-label' x='360' y='175'>CONTRIBUTIONS</text>
-    <text class='focus-year' x='360' y='226'>${escapeXml(stats.year)} ACTIVITY</text>
+    <circle cx='360' cy='161' r='61' fill='#171d23' stroke='#b98251' stroke-width='4'/>
+    <path d='M360 91v9M360 222v9' stroke='#b98251' stroke-width='2' stroke-linecap='round'/>
+    <circle cx='360' cy='161' r='50' stroke='#343d46'/>
+    <text class='focus-value' x='360' y='163'>${escapeXml(stats.contributions)}</text>
+    <text class='focus-label' x='360' y='186'>CONTRIBUTIONS</text>
+    <text class='focus-meta' x='360' y='244'>${escapeXml(stats.year)} ? PUBLIC + PRIVATE</text>
 
-    <g class='icon' stroke='#7e9586' transform='translate(589 104) scale(.72)'>${ICONS.streak}</g>
-    <text class='section-label' x='601' y='135'>CURRENT STREAK</text>
-    <text class='side-value' x='601' y='176'>${escapeXml(stats.streak)}</text>
-    <text class='side-meta' x='601' y='205'>${streakUnit}</text>
+    <rect x='581' y='101' width='28' height='28' rx='8' fill='#7e9586' opacity='.13'/>
+    <g class='icon' stroke='#7e9586' transform='translate(586 106) scale(.75)'>${ICONS.streak}</g>
+    <text class='section-label' x='595' y='148'>CURRENT STREAK</text>
+    <text class='side-value' x='595' y='184'>${escapeXml(stats.streak)}</text>
+    <text class='side-meta' x='595' y='211'>${streakUnit}</text>
+    <text class='side-meta' x='595' y='228'>CONTRIBUTION ACTIVITY</text>
   </g>
 
-  <rect x='24' y='264' width='672' height='62' rx='12' fill='#11161c' stroke='#303841'/>
-  <path d='M192 276v38M360 276v38M528 276v38' stroke='#2d353d'/>
-  ${compactMetric(stats.repositories, 'REPOSITORIES', 42, ICONS.repositories, '#7892a8')}
-  ${compactMetric(stats.stars, 'STARS', 210, ICONS.stars, '#a88b62')}
-  ${compactMetric(stats.followers, 'FOLLOWERS', 378, ICONS.followers, '#7e9586')}
-  ${compactMetric(stats.forks, 'FORKS', 546, ICONS.forks, '#9186a0')}
+  ${compactMetric(stats.repositories, 'REPOSITORIES', 24, ICONS.repositories, '#7892a8')}
+  ${compactMetric(stats.stars, 'STARS', 195, ICONS.stars, '#aa8d63')}
+  ${compactMetric(stats.followers, 'FOLLOWERS', 366, ICONS.followers, '#7e9586')}
+  ${compactMetric(stats.forks, 'FORKS', 537, ICONS.forks, '#9186a0')}
 </svg>`;
 }
 
