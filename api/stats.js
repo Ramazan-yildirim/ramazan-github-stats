@@ -1,240 +1,224 @@
-const USERNAME = "Ramazan-yildirim";
+const USERNAME = 'Ramazan-yildirim';
+const GITHUB_GRAPHQL_URL = 'https://api.github.com/graphql';
+const SUCCESS_CACHE_SECONDS = 600;
+const ERROR_CACHE_SECONDS = 60;
 
-const githubHeaders = {
-  Accept: "application/vnd.github+json",
-  "X-GitHub-Api-Version": "2026-03-10",
-};
+const OVERVIEW_QUERY = `
+  query GitHubOverview(
+    $login: String!
+    $yearStart: DateTime!
+    $streakStart: DateTime!
+    $now: DateTime!
+    $repoCursor: String
+  ) {
+    user(login: $login) {
+      name
+      followers { totalCount }
+      repositories(
+        first: 100
+        after: $repoCursor
+        ownerAffiliations: [OWNER]
+        isFork: false
+        privacy: PUBLIC
+      ) {
+        totalCount
+        nodes { stargazerCount forkCount }
+        pageInfo { hasNextPage endCursor }
+      }
+      currentYear: contributionsCollection(from: $yearStart, to: $now) {
+        totalCommitContributions
+      }
+      streakWindow: contributionsCollection(from: $streakStart, to: $now) {
+        contributionCalendar {
+          weeks {
+            contributionDays { date contributionCount }
+          }
+        }
+      }
+    }
+  }
+`;
 
-if (process.env.GH_TOKEN) {
-  githubHeaders.Authorization = `Bearer ${process.env.GH_TOKEN}`;
-}
+const REPOSITORIES_QUERY = `
+  query RepositoryPage($login: String!, $repoCursor: String!) {
+    user(login: $login) {
+      repositories(
+        first: 100
+        after: $repoCursor
+        ownerAffiliations: [OWNER]
+        isFork: false
+        privacy: PUBLIC
+      ) {
+        nodes { stargazerCount forkCount }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+`;
 
-async function githubRequest(path) {
-  const response = await fetch(`https://api.github.com${path}`, {
-    headers: githubHeaders,
+async function githubGraphql(query, variables) {
+  const token = process.env.GH_TOKEN;
+  if (!token) throw new Error('GitHub authentication is unavailable');
+
+  const response = await fetch(GITHUB_GRAPHQL_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ query, variables }),
   });
 
   if (!response.ok) {
-    throw new Error(`GitHub API error: ${response.status}`);
+    throw new Error(`GitHub API request failed with status ${response.status}`);
   }
 
-  return response.json();
-}
+  const payload = await response.json();
 
-async function getRepositories(username) {
-  const repositories = [];
-  let page = 1;
-
-  while (true) {
-    const repos = await githubRequest(
-      `/users/${username}/repos?type=owner&sort=updated&per_page=100&page=${page}`
-    );
-
-    repositories.push(...repos);
-
-    if (repos.length < 100) {
-      break;
-    }
-
-    page++;
+  if (payload.errors?.length || !payload.data) {
+    throw new Error('GitHub API returned an invalid response');
   }
 
-  return repositories;
+  return payload.data;
 }
 
-function escapeXml(value = "") {
+function getDateRange(now = new Date()) {
+  const yearStart = new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
+  const streakStart = new Date(now);
+
+  // GitHub limits a contribution collection to at most one year.
+  streakStart.setUTCFullYear(streakStart.getUTCFullYear() - 1);
+  streakStart.setUTCDate(streakStart.getUTCDate() + 1);
+
+  return {
+    year: now.getUTCFullYear(),
+    yearStart: yearStart.toISOString(),
+    streakStart: streakStart.toISOString(),
+    now: now.toISOString(),
+  };
+}
+
+function calculateCurrentStreak(weeks) {
+  const days = weeks
+    .flatMap((week) => week.contributionDays)
+    .sort((first, second) => first.date.localeCompare(second.date));
+  let index = days.length - 1;
+
+  // Today may still receive a contribution, so yesterday keeps the streak active.
+  if (days[index]?.contributionCount === 0) index--;
+
+  let streak = 0;
+  while (index >= 0 && days[index].contributionCount > 0) {
+    streak++;
+    index--;
+  }
+
+  return streak;
+}
+
+function sumRepositoryMetrics(repositories, totals) {
+  for (const repository of repositories) {
+    totals.stars += repository.stargazerCount;
+    totals.forks += repository.forkCount;
+  }
+}
+
+async function getOverview() {
+  const dateRange = getDateRange();
+  const data = await githubGraphql(OVERVIEW_QUERY, {
+    login: USERNAME,
+    yearStart: dateRange.yearStart,
+    streakStart: dateRange.streakStart,
+    now: dateRange.now,
+    repoCursor: null,
+  });
+
+  if (!data.user) throw new Error('GitHub user was not found');
+
+  const totals = { stars: 0, forks: 0 };
+  let repositories = data.user.repositories;
+  sumRepositoryMetrics(repositories.nodes, totals);
+
+  // Usually one request; pagination only runs after 100 original public repos.
+  while (repositories.pageInfo.hasNextPage) {
+    const nextPage = await githubGraphql(REPOSITORIES_QUERY, {
+      login: USERNAME,
+      repoCursor: repositories.pageInfo.endCursor,
+    });
+
+    if (!nextPage.user) throw new Error('GitHub user was not found');
+
+    repositories = nextPage.user.repositories;
+    sumRepositoryMetrics(repositories.nodes, totals);
+  }
+
+  return {
+    name: data.user.name || USERNAME,
+    repositories: data.user.repositories.totalCount,
+    stars: totals.stars,
+    followers: data.user.followers.totalCount,
+    forks: totals.forks,
+    commits: data.user.currentYear.totalCommitContributions,
+    year: dateRange.year,
+    streak: calculateCurrentStreak(
+      data.user.streakWindow.contributionCalendar.weeks
+    ),
+  };
+}
+
+function escapeXml(value = '') {
   return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\x22/g, '&quot;')
+    .replace(/\x27/g, '&apos;');
+}
+
+function metric(value, label, x, y) {
+  return `<g transform='translate(${x} ${y})'><text class='value' text-anchor='middle'>${escapeXml(value)}</text><text class='label' y='25' text-anchor='middle'>${escapeXml(label)}</text></g>`;
+}
+
+function createStatsSvg(stats) {
+  return `<svg width='720' height='260' viewBox='0 0 720 260' fill='none' xmlns='http://www.w3.org/2000/svg' role='img' aria-labelledby='title description'>
+  <title id='title'>GitHub Overview for ${escapeXml(USERNAME)}</title>
+  <desc id='description'>Repositories, stars, followers, forks, yearly commits, and current contribution streak.</desc>
+  <style>.title{font:700 20px 'Segoe UI',Arial,sans-serif}.name{font:600 15px 'Segoe UI',Arial,sans-serif}.handle,.label{font:13px 'Segoe UI',Arial,sans-serif}.value{font:700 24px 'Segoe UI',Arial,sans-serif;fill:#3fb950}.label,.handle{fill:#8b949e}</style>
+  <rect x='.5' y='.5' width='719' height='259' rx='14' fill='#0d1117' stroke='#30363d'/>
+  <rect width='5' height='260' rx='2.5' fill='#238636'/>
+  <text class='title' x='30' y='37' fill='#f0f6fc'>GitHub Overview</text>
+  <text class='name' x='30' y='65' fill='#c9d1d9'>${escapeXml(stats.name)}</text>
+  <text class='handle' x='690' y='65' text-anchor='end'>@${escapeXml(USERNAME)}</text>
+  <path d='M30 84H690' stroke='#21262d'/>
+  ${metric(stats.repositories, 'Repositories', 120, 126)}
+  ${metric(stats.stars, 'Stars', 360, 126)}
+  ${metric(stats.followers, 'Followers', 600, 126)}
+  ${metric(stats.forks, 'Forks', 120, 207)}
+  ${metric(stats.commits, `Commits ${stats.year}`, 360, 207)}
+  ${metric(stats.streak, 'Current Streak', 600, 207)}
+</svg>`;
+}
+
+function createErrorSvg() {
+  return `<svg width='720' height='120' viewBox='0 0 720 120' xmlns='http://www.w3.org/2000/svg' role='img' aria-labelledby='error-title'><title id='error-title'>GitHub statistics are temporarily unavailable</title><rect x='.5' y='.5' width='719' height='119' rx='14' fill='#0d1117' stroke='#30363d'/><rect width='5' height='120' rx='2.5' fill='#f85149'/><text x='30' y='66' fill='#c9d1d9' font-size='17' font-family='Segoe UI,Arial,sans-serif'>GitHub statistics are temporarily unavailable.</text></svg>`;
+}
+
+function svgResponse(svg, cacheSeconds) {
+  return new Response(svg, {
+    headers: {
+      'Content-Type': 'image/svg+xml; charset=utf-8',
+      'Cache-Control': 'public, max-age=0, must-revalidate',
+      'Vercel-CDN-Cache-Control': `public, max-age=${cacheSeconds}`,
+    },
+  });
 }
 
 export default {
   async fetch() {
     try {
-      const [user, repositories] = await Promise.all([
-        githubRequest(`/users/${USERNAME}`),
-        getRepositories(USERNAME),
-      ]);
-
-      // Fork olan projeleri kendi proje istatistiklerimize katmıyoruz.
-      const originalRepositories = repositories.filter(
-        (repository) => !repository.fork
-      );
-
-      const totalStars = originalRepositories.reduce(
-        (total, repository) => total + repository.stargazers_count,
-        0
-      );
-
-      const totalForks = originalRepositories.reduce(
-        (total, repository) => total + repository.forks_count,
-        0
-      );
-
-      const svg = `
-<svg
-  width="720"
-  height="220"
-  viewBox="0 0 720 220"
-  xmlns="http://www.w3.org/2000/svg"
->
-  <defs>
-    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#0d1117"/>
-      <stop offset="100%" stop-color="#161b22"/>
-    </linearGradient>
-  </defs>
-
-  <rect
-    width="720"
-    height="220"
-    rx="18"
-    fill="url(#background)"
-    stroke="#30363d"
-  />
-
-  <rect
-    x="0"
-    y="0"
-    width="6"
-    height="220"
-    rx="3"
-    fill="#58a6ff"
-  />
-
-  <text
-    x="35"
-    y="48"
-    fill="#ffffff"
-    font-size="24"
-    font-weight="700"
-    font-family="Segoe UI, Arial, sans-serif"
-  >
-    ${escapeXml(user.name || USERNAME)}
-  </text>
-
-  <text
-    x="35"
-    y="75"
-    fill="#8b949e"
-    font-size="14"
-    font-family="Segoe UI, Arial, sans-serif"
-  >
-    @${escapeXml(USERNAME)}
-  </text>
-
-  <line
-    x1="35"
-    y1="100"
-    x2="685"
-    y2="100"
-    stroke="#30363d"
-  />
-
-  <text x="60" y="145"
-        fill="#58a6ff"
-        font-size="25"
-        font-weight="700"
-        text-anchor="middle"
-        font-family="Segoe UI, Arial, sans-serif">
-    ${originalRepositories.length}
-  </text>
-
-  <text x="60" y="172"
-        fill="#8b949e"
-        font-size="13"
-        text-anchor="middle"
-        font-family="Segoe UI, Arial, sans-serif">
-    Repositories
-  </text>
-
-  <text x="230" y="145"
-        fill="#58a6ff"
-        font-size="25"
-        font-weight="700"
-        text-anchor="middle"
-        font-family="Segoe UI, Arial, sans-serif">
-    ${totalStars}
-  </text>
-
-  <text x="230" y="172"
-        fill="#8b949e"
-        font-size="13"
-        text-anchor="middle"
-        font-family="Segoe UI, Arial, sans-serif">
-    Stars
-  </text>
-
-  <text x="400" y="145"
-        fill="#58a6ff"
-        font-size="25"
-        font-weight="700"
-        text-anchor="middle"
-        font-family="Segoe UI, Arial, sans-serif">
-    ${totalForks}
-  </text>
-
-  <text x="400" y="172"
-        fill="#8b949e"
-        font-size="13"
-        text-anchor="middle"
-        font-family="Segoe UI, Arial, sans-serif">
-    Forks
-  </text>
-
-  <text x="570" y="145"
-        fill="#58a6ff"
-        font-size="25"
-        font-weight="700"
-        text-anchor="middle"
-        font-family="Segoe UI, Arial, sans-serif">
-    ${user.followers}
-  </text>
-
-  <text x="570" y="172"
-        fill="#8b949e"
-        font-size="13"
-        text-anchor="middle"
-        font-family="Segoe UI, Arial, sans-serif">
-    Followers
-  </text>
-</svg>`;
-
-      return new Response(svg, {
-        headers: {
-          "Content-Type": "image/svg+xml; charset=utf-8",
-
-          // Kullanıcı tarayıcısında kalıcı cache yapma.
-          "Cache-Control": "public, max-age=0, must-revalidate",
-
-          // Vercel CDN'de 1 saat sakla.
-          "Vercel-CDN-Cache-Control": "public, max-age=3600",
-        },
-      });
-    } catch (error) {
-      const errorSvg = `
-<svg width="720" height="120" xmlns="http://www.w3.org/2000/svg">
-  <rect width="720" height="120" rx="15" fill="#0d1117"/>
-  <text
-    x="30"
-    y="68"
-    fill="#f85149"
-    font-size="18"
-    font-family="Segoe UI, Arial, sans-serif"
-  >
-    GitHub statistics could not be loaded.
-  </text>
-</svg>`;
-
-      return new Response(errorSvg, {
-        status: 500,
-        headers: {
-          "Content-Type": "image/svg+xml; charset=utf-8",
-        },
-      });
+      return svgResponse(createStatsSvg(await getOverview()), SUCCESS_CACHE_SECONDS);
+    } catch {
+      return svgResponse(createErrorSvg(), ERROR_CACHE_SECONDS);
     }
   },
 };
