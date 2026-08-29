@@ -43,6 +43,9 @@ function buildOverviewQuery(years) {
           nodes { stargazerCount forkCount }
           pageInfo { hasNextPage endCursor }
         }
+      }
+      viewer {
+        login
         ${commitFields}
         streakWindow: contributionsCollection(from: $streakStart, to: $now) {
           contributionCalendar {
@@ -166,7 +169,13 @@ async function getOverview() {
     ...dateRange.commitVariables,
   });
 
-  if (!data.user) throw new Error('GitHub user was not found');
+  if (!data.user || !data.viewer) {
+    throw new Error('GitHub account data is unavailable');
+  }
+
+  if (data.viewer.login.toLowerCase() !== USERNAME.toLowerCase()) {
+    throw new Error('GitHub token belongs to a different account');
+  }
 
   const totals = { stars: 0, forks: 0 };
   let repositories = data.user.repositories;
@@ -186,7 +195,7 @@ async function getOverview() {
   }
 
   const contributionsByYear = dateRange.years.map((year) => {
-    const collection = data.user[`commits${year}`];
+    const collection = data.viewer[`commits${year}`];
     return (
       (collection?.contributionCalendar?.totalContributions || 0) +
       (collection?.restrictedContributionsCount || 0)
@@ -206,7 +215,7 @@ async function getOverview() {
     ),
     year: dateRange.year,
     streak: calculateCurrentStreak(
-      data.user.streakWindow.contributionCalendar.weeks
+      data.viewer.streakWindow.contributionCalendar.weeks
     ),
   };
 }
