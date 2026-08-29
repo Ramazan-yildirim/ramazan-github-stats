@@ -14,7 +14,10 @@ function buildOverviewQuery(years) {
   const commitFields = years
     .map(
       (year) =>
-        `commits${year}: contributionsCollection(from: $commits${year}From, to: $commits${year}To) { totalCommitContributions }`
+        `commits${year}: contributionsCollection(from: $commits${year}From, to: $commits${year}To) {
+          totalCommitContributions
+          contributionCalendar { totalContributions }
+        }`
     )
     .join('\n');
 
@@ -185,6 +188,9 @@ async function getOverview() {
   const commitsByYear = dateRange.years.map(
     (year) => data.user[`commits${year}`]?.totalCommitContributions || 0
   );
+  const currentYearContributions =
+    data.user[`commits${dateRange.year}`]?.contributionCalendar
+      ?.totalContributions || 0;
 
   return {
     name: data.user.name || USERNAME,
@@ -192,7 +198,7 @@ async function getOverview() {
     stars: totals.stars,
     followers: data.user.followers.totalCount,
     forks: totals.forks,
-    commits: commitsByYear.at(-1) || 0,
+    contributions: currentYearContributions,
     totalCommits: commitsByYear.reduce((total, count) => total + count, 0),
     year: dateRange.year,
     streak: calculateCurrentStreak(
@@ -219,54 +225,77 @@ const ICONS = {
   streak: `<rect x='3' y='5' width='18' height='16' rx='2'/><path d='M16 3v4M8 3v4M3 10h18M8 15l2 2 5-5'/>`,
 };
 
-function metric(value, label, x, y, icon, accent) {
-  return `<g transform='translate(${x} ${y})'>
-    <rect class='panel' width='216' height='74' rx='10'/>
-    <rect x='1' y='1' width='3' height='72' rx='1.5' fill='${accent}' opacity='.9'/>
-    <rect x='13' y='13' width='31' height='31' rx='7' fill='${accent}' opacity='.12'/>
-    <g class='icon' stroke='${accent}' transform='translate(16.5 17) scale(.75)'>${icon}</g>
-    <text class='label' x='53' y='27'>${escapeXml(label)}</text>
-    <text class='value' x='53' y='57'>${escapeXml(value)}</text>
-    <path d='M190 16h10' stroke='${accent}' opacity='.45' stroke-width='1.5'/>
+function compactMetric(value, label, x, icon, accent) {
+  return `<g transform='translate(${x} 275)'>
+    <rect width='30' height='30' y='3' rx='7' fill='${accent}' opacity='.13'/>
+    <g class='icon' stroke='${accent}' transform='translate(6 9) scale(.72)'>${icon}</g>
+    <text class='mini-label' x='40' y='13'>${escapeXml(label)}</text>
+    <text class='mini-value' x='40' y='38'>${escapeXml(value)}</text>
   </g>`;
 }
 
 function createStatsSvg(stats) {
-  return `<svg width='720' height='288' viewBox='0 0 720 288' fill='none' xmlns='http://www.w3.org/2000/svg' role='img' aria-labelledby='title description'>
+  const streakUnit = stats.streak === 1 ? 'CONSECUTIVE DAY' : 'CONSECUTIVE DAYS';
+
+  return `<svg width='720' height='344' viewBox='0 0 720 344' fill='none' xmlns='http://www.w3.org/2000/svg' role='img' aria-labelledby='title description'>
   <title id='title'>GitHub Overview for ${escapeXml(USERNAME)}</title>
-  <desc id='description'>Repositories, stars, followers, forks, yearly commits, and current contribution streak.</desc>
+  <desc id='description'>Repositories, stars, followers, forks, yearly contributions, total commits, and current contribution streak.</desc>
   <style>
-    .name{font:650 20px 'Segoe UI',Arial,sans-serif;fill:#e4e9ee}
-    .handle{font:12px 'Segoe UI',Arial,sans-serif;fill:#818d99}
-    .eyebrow{font:600 9px 'Segoe UI',Arial,sans-serif;letter-spacing:1.7px;fill:#7894ad}
-    .monogram{font:700 17px 'Segoe UI',Arial,sans-serif;letter-spacing:1px;fill:#cbd5de}
-    .panel{fill:#111922;stroke:#2a3642}
-    .label{font:600 10px 'Segoe UI',Arial,sans-serif;letter-spacing:1.1px;fill:#8b98a5}
-    .value{font:650 25px 'Segoe UI',Arial,sans-serif;fill:#dce3e9}
+    .name{font:650 18px 'Segoe UI',Arial,sans-serif;fill:#e6edf3}
+    .handle{font:11px 'Segoe UI',Arial,sans-serif;fill:#7f8994}
+    .eyebrow{font:650 9px 'Segoe UI',Arial,sans-serif;letter-spacing:1.65px;fill:#8298aa}
+    .monogram{font:700 15px 'Segoe UI',Arial,sans-serif;letter-spacing:.8px;fill:#d6dee5}
+    .section-label{font:650 10px 'Segoe UI',Arial,sans-serif;letter-spacing:1.35px;fill:#8c97a2}
+    .side-value{font:700 34px 'Segoe UI',Arial,sans-serif;fill:#e7edf2}
+    .side-meta{font:10px 'Segoe UI',Arial,sans-serif;fill:#6f7a85}
+    .focus-value{font:720 31px 'Segoe UI',Arial,sans-serif;fill:#f0f3f5}
+    .focus-label{font:650 9px 'Segoe UI',Arial,sans-serif;letter-spacing:1.2px;fill:#c99663}
+    .focus-year{font:11px 'Segoe UI',Arial,sans-serif;fill:#7f8993}
+    .mini-label{font:650 8px 'Segoe UI',Arial,sans-serif;letter-spacing:1px;fill:#77828d}
+    .mini-value{font:680 19px 'Segoe UI',Arial,sans-serif;fill:#dce3e8}
     .icon{fill:none;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round}
-    .total-label{font:600 9px 'Segoe UI',Arial,sans-serif;letter-spacing:1.35px;fill:#8da4b8}
-    .total-value{font:700 24px 'Segoe UI',Arial,sans-serif;fill:#dce5ec}
-    .total-meta{font:10px 'Segoe UI',Arial,sans-serif;fill:#788794}
+    .status{font:650 8px 'Segoe UI',Arial,sans-serif;letter-spacing:1.15px;fill:#84909b}
   </style>
-  <rect x='.5' y='.5' width='719' height='287' rx='14' fill='#0b1016' stroke='#26313b'/>
-  <rect x='24' y='20' width='54' height='54' rx='12' fill='#172330' stroke='#3a4a59'/>
-  <path d='M24 61 65 20h13v13L37 74H24Z' fill='#6f8da8' opacity='.12'/>
-  <text class='monogram' x='51' y='54' text-anchor='middle'>RY</text>
-  <text class='eyebrow' x='96' y='27'>GITHUB OVERVIEW</text>
-  <text class='name' x='96' y='50'>${escapeXml(stats.name)}</text>
-  <text class='handle' x='96' y='70'>@${escapeXml(USERNAME)}</text>
-  <rect x='492' y='18' width='204' height='58' rx='11' fill='#14202b' stroke='#354858'/>
-  <rect x='492' y='18' width='4' height='58' rx='2' fill='#6f8da8'/>
-  <text class='total-label' x='510' y='37'>TOTAL COMMITS</text>
-  <text class='total-value' x='510' y='65'>${escapeXml(stats.totalCommits)}</text>
-  <text class='total-meta' x='678' y='62' text-anchor='end'>SINCE ${FIRST_COMMIT_YEAR}</text>
-  <path d='M24 91H696' stroke='#222c36'/>
-  ${metric(stats.repositories, 'REPOSITORIES', 24, 105, ICONS.repositories, '#6f8da8')}
-  ${metric(stats.stars, 'STARS', 252, 105, ICONS.stars, '#a08b61')}
-  ${metric(stats.followers, 'FOLLOWERS', 480, 105, ICONS.followers, '#6f9185')}
-  ${metric(stats.forks, 'FORKS', 24, 190, ICONS.forks, '#827b96')}
-  ${metric(stats.commits, `COMMITS ${stats.year}`, 252, 190, ICONS.commits, '#9a7669')}
-  ${metric(stats.streak, 'CURRENT STREAK', 480, 190, ICONS.streak, '#8b8465')}
+  <rect x='.5' y='.5' width='719' height='343' rx='15' fill='#0d1117' stroke='#303842'/>
+
+  <rect x='24' y='18' width='44' height='44' rx='11' fill='#18212a' stroke='#3a4651'/>
+  <path d='M24 50 56 18h12v12L36 62H24Z' fill='#7892a8' opacity='.12'/>
+  <text class='monogram' x='46' y='46' text-anchor='middle'>RY</text>
+  <text class='eyebrow' x='82' y='28'>GITHUB ACTIVITY</text>
+  <text class='name' x='82' y='49'>${escapeXml(stats.name)}</text>
+  <text class='handle' x='696' y='35' text-anchor='end'>@${escapeXml(USERNAME)}</text>
+  <circle cx='612' cy='53' r='3' fill='#789486'/>
+  <text class='status' x='621' y='56'>GITHUB DATA</text>
+
+  <rect x='24' y='78' width='672' height='174' rx='14' fill='#13181e' stroke='#333b44'/>
+  <rect x='318' y='78' width='84' height='3' rx='1.5' fill='#b98050'/>
+  <path d='M214 98v134M506 98v134' stroke='#353d45'/>
+
+  <g text-anchor='middle'>
+    <g class='icon' stroke='#7892a8' transform='translate(107 104) scale(.72)'>${ICONS.commits}</g>
+    <text class='section-label' x='119' y='135'>TOTAL COMMITS</text>
+    <text class='side-value' x='119' y='176'>${escapeXml(stats.totalCommits)}</text>
+    <text class='side-meta' x='119' y='205'>COUNTED SINCE ${FIRST_COMMIT_YEAR}</text>
+
+    <circle cx='360' cy='151' r='54' stroke='#303840' stroke-width='7'/>
+    <circle cx='360' cy='151' r='54' stroke='#b98050' stroke-width='3'/>
+    <circle cx='360' cy='97' r='5' fill='#13181e' stroke='#c48a55' stroke-width='3'/>
+    <text class='focus-value' x='360' y='153'>${escapeXml(stats.contributions)}</text>
+    <text class='focus-label' x='360' y='175'>CONTRIBUTIONS</text>
+    <text class='focus-year' x='360' y='226'>${escapeXml(stats.year)} ACTIVITY</text>
+
+    <g class='icon' stroke='#7e9586' transform='translate(589 104) scale(.72)'>${ICONS.streak}</g>
+    <text class='section-label' x='601' y='135'>CURRENT STREAK</text>
+    <text class='side-value' x='601' y='176'>${escapeXml(stats.streak)}</text>
+    <text class='side-meta' x='601' y='205'>${streakUnit}</text>
+  </g>
+
+  <rect x='24' y='264' width='672' height='62' rx='12' fill='#11161c' stroke='#303841'/>
+  <path d='M192 276v38M360 276v38M528 276v38' stroke='#2d353d'/>
+  ${compactMetric(stats.repositories, 'REPOSITORIES', 42, ICONS.repositories, '#7892a8')}
+  ${compactMetric(stats.stars, 'STARS', 210, ICONS.stars, '#a88b62')}
+  ${compactMetric(stats.followers, 'FOLLOWERS', 378, ICONS.followers, '#7e9586')}
+  ${compactMetric(stats.forks, 'FORKS', 546, ICONS.forks, '#9186a0')}
 </svg>`;
 }
 
