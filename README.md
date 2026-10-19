@@ -1,6 +1,6 @@
 # Ramazan GitHub cards
 
-Custom SVG cards for the Ramazan-yildirim profile. No runtime dependencies.
+Linux terminal SVG cards for the Ramazan-yildirim profile. Monospace output, shell prompts, a green/cyan palette and compact mobile layouts. No runtime dependencies.
 
 ## Endpoints
 
@@ -23,7 +23,7 @@ Data definitions: https://docs.github.com/en/graphql/reference/users
 
 ## Profile integration
 
-Deploy and check this service before publishing the profile README that uses the new language route. Deployment has not been performed as part of the local redesign.
+Push this repository to its connected Vercel production branch to publish the terminal cards. Check both endpoints before updating the profile README.
 
 Expected production routes after deployment:
 
@@ -40,4 +40,4 @@ Expected production routes after deployment:
 </picture>
 ```
 
-Replace `languages` with `stats` for the overview. The RY logo is embedded in `lib/logo.js`; the supplied pixels are used as a luminance mask, with no external image dependency. Palette and layout live in `lib/cards.js`.
+Replace `languages` with `stats` for the overview. Palette and layout live in `lib/cards.js`. Both cards use the same terminal frame as the profile README, with explicit dark and light palettes. Empty and error responses keep the same terminal design. The original RY logo asset remains in `lib/logo.js`; the new cards use a text signature and have no external image dependency.
