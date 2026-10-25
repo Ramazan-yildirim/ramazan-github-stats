@@ -1,13 +1,13 @@
 # Ramazan GitHub cards
 
-Linux terminal SVG cards for the Ramazan-yildirim profile. Monospace output, shell prompts, a green/cyan palette and compact mobile layouts. No runtime dependencies.
+Minimal terminal SVG cards for the Ramazan-yildirim profile. Monospace output, a green/cyan palette, circular charts and compact mobile layouts. No runtime dependencies.
 
 ## Endpoints
 
-- `/api/stats`: GitHub contribution calendar totals since 2023, current-year contributions, current streak, owned public non-fork repository count, stars and forks received, followers.
+- `/api/stats`: GitHub contribution calendar totals since 2023, current-year contributions and a circular current-streak highlight. A secondary row shows owned public non-fork repository count, stars received and followers. Fork totals are still fetched but omitted from the card to reduce clutter. The streak outline is decorative, not a progress percentage or rank.
 - `/api/languages`: language byte totals across all owned public non-fork repositories, including archived repositories. The five largest languages are shown individually; all remaining bytes are grouped as Other. This is not a measure of proficiency or time spent.
 
-Both routes accept `theme=dark` (default) or `theme=light` and `layout=compact` for narrow screens. Unknown values fall back to the default dark/wide presentation.
+Both routes accept `theme=dark` (default) or `theme=light` and `layout=compact` for narrow screens. Unknown values fall back to the default dark/wide presentation. Language bytes use a donut chart with a color-matched legend; the center highlights the leading language's share. All segments, including Other and tiny shares, retain their actual byte proportions. Empty data shows a neutral ring and a message.
 
 ## Configuration and validation
 
@@ -40,4 +40,6 @@ Expected production routes after deployment:
 </picture>
 ```
 
-Replace `languages` with `stats` for the overview. Palette and layout live in `lib/cards.js`. Both cards use the same terminal frame as the profile README, with explicit dark and light palettes. Empty and error responses keep the same terminal design. The original RY logo asset remains in `lib/logo.js`; the new cards use a text signature and have no external image dependency.
+Replace `languages` with `stats` for the overview. Palette and layout live in `lib/cards.js`. Both cards use a simplified terminal frame with explicit dark and light palettes, without repeated prompts, table headings or a footer signature. The overview is 720×308 on desktop and 360×404 on mobile. The language card adapts its height to the number of languages; its six-entry layouts are 720×320 and 360×440. Detailed metric scopes also appear in each SVG's accessible description. Empty and error responses keep the same terminal design. No external image, font or charting dependency is required.
+
+Visual references: [GitHub Readme Stats](https://github.com/anuraghazra/github-readme-stats) for language donuts and [GitHub Readme Streak Stats](https://github.com/DenverCoder1/github-readme-streak-stats) for the three-part activity layout. These cards use the existing data-fetching logic, credentials and cache settings.
